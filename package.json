@@ -26,7 +26,8 @@
         "shot": "node tools/shot.mjs",
         "assets": "node tools/optimize-assets.mjs",
         "start": "vite preview --host",
-        "perf": "node tools/perf.mjs"
+        "perf": "node tools/perf.mjs",
+        "bake": "node tools/bake-lite.mjs"
     },
     "type": "module"
 }
