@@ -21,6 +21,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { normalCanvasFromHeight } from '../lib/normalmap.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 
 export const views = {
@@ -42,26 +43,7 @@ function canvas(w, h = w) {
 }
 
 // normal map canvas from a height canvas (r channel = height), strength in px
-function normalFromHeight(src, strength = 2) {
-  const w = src.width, h = src.height;
-  const sd = src.getContext('2d').getImageData(0, 0, w, h).data;
-  const out = canvas(w, h);
-  const octx = out.getContext('2d');
-  const od = octx.createImageData(w, h);
-  const H = (x, y) => sd[(((y + h) % h) * w + ((x + w) % w)) * 4] / 255;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const dx = (H(x + 1, y) - H(x - 1, y)) * strength;
-    const dy = (H(x, y + 1) - H(x, y - 1)) * strength;
-    const l = Math.hypot(dx, dy, 1);
-    const i = (y * w + x) * 4;
-    od.data[i] = ((-dx / l) * 0.5 + 0.5) * 255;
-    od.data[i + 1] = ((dy / l) * 0.5 + 0.5) * 255;
-    od.data[i + 2] = ((1 / l) * 0.5 + 0.5) * 255;
-    od.data[i + 3] = 255;
-  }
-  octx.putImageData(od, 0, 0);
-  return out;
-}
+const normalFromHeight = normalCanvasFromHeight;
 
 function canvasTex(c, { srgb = true, repeat = 1, aniso = 8 } = {}) {
   const t = new THREE.CanvasTexture(c);

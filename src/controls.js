@@ -12,6 +12,7 @@ export class Walker {
     this.camera = camera;
     this.colliders = colliders;
     this.x = 0; this.y = 0; this.yaw = 0; this.pitch = -0.05;
+    this.dirty = true;
     this.keys = new Set();
     this.locked = false;
     this.touchMove = null; this.touchLook = null;
@@ -97,11 +98,18 @@ export class Walker {
       if (!this.blocked(this.x + dx, this.y)) this.x += dx;
       if (!this.blocked(this.x, this.y + dy)) this.y += dy;
     }
-    this.apply();
+    return this.apply();
   }
 
+  /** Writes the pose to the camera and raises `dirty` when it changed, so the render loop can skip frames while nothing moves. */
   apply() {
-    this.camera.position.set(this.x * FT, EYE * FT, this.y * FT);
-    this.camera.rotation.set(this.pitch, -this.yaw, 0);
+    const moved = this.x !== this._x || this.y !== this._y || this.yaw !== this._yaw || this.pitch !== this._pitch;
+    if (moved) {
+      this._x = this.x; this._y = this.y; this._yaw = this.yaw; this._pitch = this.pitch;
+      this.dirty = true;
+      this.camera.position.set(this.x * FT, EYE * FT, this.y * FT);
+      this.camera.rotation.set(this.pitch, -this.yaw, 0);
+    }
+    return moved;
   }
 }

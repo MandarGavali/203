@@ -1,1 +1,174 @@
-{"asset":{"generator":"Khronos glTF Blender I/O v4.1.63","version":"2.0"},"scene":0,"scenes":[{"name":"blend_export","nodes":[0]}],"nodes":[{"mesh":0,"name":"yellow_onion"}],"materials":[{"doubleSided":true,"name":"yellow_onion","normalTexture":{"index":0},"pbrMetallicRoughness":{"baseColorTexture":{"index":1},"metallicFactor":0,"metallicRoughnessTexture":{"index":2}}}],"meshes":[{"name":"mesh.001","primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],"textures":[{"sampler":0,"source":0},{"sampler":0,"source":1},{"sampler":0,"source":2}],"images":[{"mimeType":"image/jpeg","name":"yellow_onion_nor_gl","uri":"textures/yellow_onion_nor_gl_1k.jpg"},{"mimeType":"image/jpeg","name":"yellow_onion_diff","uri":"textures/yellow_onion_diff_1k.jpg"},{"mimeType":"image/jpeg","name":"yellow_onion_rough","uri":"textures/yellow_onion_arm_1k.jpg"}],"accessors":[{"bufferView":0,"componentType":5126,"count":3349,"max":[0.03567872196435928,0.08610223233699799,0.03121955133974552],"min":[-0.036803681403398514,-0.00027344742557033896,-0.03741702809929848],"type":"VEC3"},{"bufferView":1,"componentType":5126,"count":3349,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":3349,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":16332,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteLength":40188,"byteOffset":0,"target":34962},{"buffer":0,"byteLength":40188,"byteOffset":40188,"target":34962},{"buffer":0,"byteLength":26792,"byteOffset":80376,"target":34962},{"buffer":0,"byteLength":32664,"byteOffset":107168,"target":34963}],"samplers":[{"magFilter":9729,"minFilter":9987}],"buffers":[{"byteLength":139832,"uri":"yellow_onion.buf"}]}
+{
+  "asset": {
+    "generator": "glTF-Transform v4.5.1",
+    "version": "2.0"
+  },
+  "accessors": [
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 3349,
+      "max": [
+        0.03567872196435928,
+        0.08610223233699799,
+        0.03121955133974552
+      ],
+      "min": [
+        -0.036803681403398514,
+        -0.00027344742557033896,
+        -0.03741702809929848
+      ],
+      "bufferView": 0,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 3349,
+      "bufferView": 0,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 3349,
+      "bufferView": 0,
+      "byteOffset": 24
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 16332,
+      "bufferView": 1,
+      "byteOffset": 0
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 107168,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 107168,
+      "byteLength": 32664,
+      "target": 34963
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "extensions": {
+        "KHR_texture_basisu": {
+          "source": 1
+        }
+      }
+    },
+    {
+      "sampler": 0,
+      "extensions": {
+        "KHR_texture_basisu": {
+          "source": 0
+        }
+      }
+    },
+    {
+      "sampler": 0,
+      "extensions": {
+        "KHR_texture_basisu": {
+          "source": 2
+        }
+      }
+    }
+  ],
+  "images": [
+    {
+      "name": "yellow_onion_nor_gl",
+      "mimeType": "image/ktx2",
+      "uri": "textures/yellow_onion_nor_gl_1k.ktx2"
+    },
+    {
+      "name": "yellow_onion_diff",
+      "mimeType": "image/ktx2",
+      "uri": "textures/yellow_onion_diff_1k.ktx2"
+    },
+    {
+      "name": "yellow_onion_rough",
+      "mimeType": "image/ktx2",
+      "uri": "textures/yellow_onion_arm_1k.ktx2"
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "yellow_onion.buf",
+      "byteLength": 139832
+    }
+  ],
+  "materials": [
+    {
+      "name": "yellow_onion",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      },
+      "normalTexture": {
+        "index": 1
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "mesh.001",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 3
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "yellow_onion",
+      "mesh": 0
+    }
+  ],
+  "scenes": [
+    {
+      "name": "blend_export",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0,
+  "extensionsUsed": [
+    "KHR_texture_basisu"
+  ],
+  "extensionsRequired": [
+    "KHR_texture_basisu"
+  ]
+}

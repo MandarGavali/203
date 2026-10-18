@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FT, CEILING, rooms, pieces } from './plan.js';
 import { buildShell } from './shell.js';
 import { makeCtx, pendingModels } from './lib/ctx.js';
-import { pending as pendingTex, setAnisotropy } from './lib/materials.js';
+import { pending as pendingTex, setAnisotropy, loadStats } from './lib/materials.js';
+import { initKTX2 } from './lib/ktx2.js';
+import { Quality } from './lib/quality.js';
+import { LightBudget } from './lib/lightBudget.js';
+import { Culler } from './lib/cull.js';
+import { mergeStatic, stripTransmission, setupMirrors, capCanvasTextures, convertAreaLights } from './lib/optimize.js';
 import { Walker } from './controls.js';
 import { defaultViews } from './views.js';
 
@@ -17,17 +18,51 @@ const topPiece = params.get('top');
 const shotMode = !!(shotView || topPiece);
 const m = (ft) => ft * FT;
 
+// Performance model (see README "Performance"):
+//  - quality tiers + dynamic resolution keep the frame rate up on any GPU        (src/lib/quality.js)
+//  - only the lights that matter to the viewer are switched on                   (src/lib/lightBudget.js)
+//  - static props are merged, textures are GPU-compressed, mirrors are throttled (src/lib/optimize.js, tools/optimize-assets.mjs)
+//  - the scene is static: a frame is only rendered when something changed
+const quality = new Quality(params, { shotMode });
+const tier0 = quality.settings;
+const fixedPR = params.has('pr') ? +params.get('pr') : null; // ?pr=2 pins the pixel ratio (benchmarks)
+
+// ---------- loading screen ----------
+const loaderEl = document.getElementById('loader');
+const statusEl = loaderEl.querySelector('p');
+const barEl = loaderEl.querySelector('.bar i');
+let barPct = 0;
+function setStatus(text, pct) {
+  statusEl.textContent = text;
+  if (pct != null) {
+    barPct = Math.max(barPct, pct); // never walks backwards
+    loaderEl.classList.add('determinate');
+    barEl.style.width = `${(barPct * 100).toFixed(0)}%`;
+  }
+}
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
 // ---------- renderer ----------
-const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: shotMode });
-renderer.setPixelRatio(shotMode ? 1 : +(params.get('pr') || Math.min(devicePixelRatio, 1.5)));
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: quality.tier !== 'low', powerPreference: 'high-performance', preserveDrawingBuffer: shotMode });
+} catch (e) {
+  statusEl.textContent = 'This browser could not start 3D graphics (WebGL). Try another browser, or enable hardware acceleration in its settings.';
+  loaderEl.querySelector('.bar').style.display = 'none';
+  throw e;
+}
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.AgXToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.shadowMap.autoUpdate = false; // nothing moves: render the sun's shadow map once after load
+renderer.shadowMap.autoUpdate = false; // nothing moves: render the sun's shadow map once after load (and after a tier change)
 document.getElementById('app').appendChild(renderer.domElement);
-setAnisotropy(Math.min(16, renderer.capabilities.getMaxAnisotropy()));
+// GPU resets (driver update, laptop GPU switch, sleep) drop the context: three.js rebuilds everything from the data it kept
+renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); toast('Graphics were interrupted - recovering…'); });
+renderer.domElement.addEventListener('webglcontextrestored', () => { toast(''); renderer.shadowMap.needsUpdate = true; forceFrames = Math.max(forceFrames, 3); });
+setAnisotropy(Math.min(tier0.aniso, renderer.capabilities.getMaxAnisotropy()));
+initKTX2(renderer);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.05, 200);
@@ -40,8 +75,10 @@ const skyP = new HDRLoader().loadAsync('assets/ph/kloofendal_48d_partly_cloudy_p
   hdr.mapping = THREE.EquirectangularReflectionMapping;
   scene.environment = pmrem.fromEquirectangular(hdr).texture;
   scene.environmentIntensity = 0.55;
+  hdr.dispose(); // the prefiltered cube is all that is needed: free the full-size float texture
+  pmrem.dispose();
 });
-const viewP = new THREE.TextureLoader().loadAsync('assets/backdrop/homecoming_center_rooftop_4k.jpg').then((t) => {
+const viewP = new THREE.TextureLoader().loadAsync(`assets/backdrop/rooftop_${tier0.backdrop}.jpg`).then((t) => {
   t.mapping = THREE.EquirectangularReflectionMapping;
   t.colorSpace = THREE.SRGBColorSpace;
   scene.background = t;
@@ -57,7 +94,7 @@ const centre = new THREE.Vector3(m(19.5), 0, m(18.5));
 sun.position.copy(centre).add(new THREE.Vector3(-9, 11, 14));
 sun.target.position.copy(centre);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.set(tier0.shadow, tier0.shadow);
 Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 11, bottom: -11, near: 1, far: 50 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.02;
@@ -103,19 +140,6 @@ const loadPieces = Promise.all(Object.entries(modules).map(async ([path, load]) 
   }
 }));
 
-// ---------- post ----------
-const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 4 });
-const composer = new EffectComposer(renderer, rt);
-composer.setPixelRatio(renderer.getPixelRatio());
-const renderPass = new RenderPass(scene, camera);
-composer.addPass(renderPass);
-const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
-ao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.5, thickness: 1.5, scale: 1.0, samples: 16 });
-ao.blendIntensity = 0.85;
-if (params.get('ao') === '0') ao.enabled = false;
-composer.addPass(ao);
-composer.addPass(new OutputPass());
-
 // ---------- camera modes ----------
 let activeCam = camera;
 const walker = new Walker(camera, renderer.domElement, colliders);
@@ -149,26 +173,91 @@ function setTop(pieceId) {
   shell.roof.visible = false;
   scene.traverse((o) => { if (o.userData.hideInTop) o.visible = false; }); // e.g. pendant lamps, ceiling fans
   activeCam = ortho;
-  renderPass.camera = ortho;
-  ao.camera = ortho;
-  ao.enabled = false;
+  post.renderPass.camera = ortho;
+  post.ao.camera = ortho;
+  post.ao.enabled = false;
 }
 
+// ---------- quality / render pipeline ----------
+let post = null;            // { composer, renderPass, ao } - only built for the High tier
+let usePost = false;
+let lights = null, mirrors = null, culler = null;
+const mirrorState = { frame: 0, force: false, cfg: tier0.mirror };
+let forceFrames = 3;        // render this many frames regardless (start-up, resize, quality change)
+
+async function ensurePost() {
+  if (post) return;
+  const { createPost } = await import('./lib/post.js');
+  post = createPost(renderer, scene, camera, { samples: shotMode ? 4 : 2, aoOff: params.get('ao') === '0' });
+}
+
+function applyResolution() {
+  const t = quality.settings;
+  const base = Math.min(devicePixelRatio, t.dprMax, Math.sqrt((t.maxMP * 1e6) / (innerWidth * innerHeight)));
+  const pr = fixedPR ?? Math.max(0.5, (shotMode ? 1 : base) * quality.res);
+  renderer.setPixelRatio(pr);
+  if (post) { post.composer.setPixelRatio(pr); post.composer.setSize(innerWidth, innerHeight); }
+  forceFrames = Math.max(forceFrames, 2);
+}
+
+let appliedTier = null, tierToken = 0;
+const toastEl = document.getElementById('toast');
+const toast = (text) => { if (toastEl) { toastEl.textContent = text; toastEl.classList.toggle('show', !!text); } };
+async function applyTier(initial = false) {
+  const token = ++tierToken;
+  const t = quality.settings;
+  if (t.composer) await ensurePost();
+  if (!initial && appliedTier !== quality.tier) {
+    // compile the new tier's shaders first while the current frames keep rendering, then switch in one go
+    toast('Adjusting graphics…');
+    await precompile(t);
+    toast('');
+    if (token !== tierToken) return; // superseded by a newer change
+  }
+  usePost = t.composer && !!post;
+  if (appliedTier !== quality.tier) {
+    appliedTier = quality.tier;
+    if (sun.shadow.mapSize.x !== t.shadow) {
+      sun.shadow.map?.dispose(); sun.shadow.map = null;
+      sun.shadow.mapSize.set(t.shadow, t.shadow);
+    }
+    renderer.shadowMap.needsUpdate = true;
+    if (lights && params.get('budget') !== '0' && (!shotMode || params.has('budget'))) lights.setBudget(t.lights, camera.position);
+    mirrors?.configure(t.mirror);
+    capCanvasTextures(scene, t.canvasMax);
+  }
+  applyResolution();
+  updateQualityLabel();
+}
+quality.onChange = () => { applyTier(); };
+
+const qBtn = document.getElementById('quality');
+function updateQualityLabel() { if (qBtn) qBtn.textContent = quality.label; }
+qBtn?.addEventListener('click', (e) => { e.stopPropagation(); quality.cycle(); });
+addEventListener('keydown', (e) => { if (e.code === 'KeyQ' && !e.repeat) quality.cycle(); });
+
 // ---------- HUD / minimap ----------
-const hud = document.getElementById('hud');
+const PLAN_W = 1159; // px width of the original plan drawing; the constants below are in those pixels
 const mapCanvas = document.getElementById('minimap');
 const mapCtx = mapCanvas.getContext('2d');
 const planImg = new Image();
-planImg.src = 'plan.png';
+let mapBg = null;    // the plan, drawn once at canvas size
+planImg.onload = () => {
+  mapBg = document.createElement('canvas');
+  mapBg.width = mapCanvas.width; mapBg.height = mapCanvas.height;
+  const c = mapBg.getContext('2d');
+  c.globalAlpha = 0.92;
+  c.drawImage(planImg, 0, 0, mapBg.width, planImg.height * (mapBg.width / planImg.width));
+  mapDirty = true;
+};
+planImg.src = 'assets/plan.webp';
 const toPx = (x, y) => [40 + 28.5 * x, 133 + 27.8 * y];
+let mapDirty = true;
 function drawMap() {
-  if (!planImg.complete) return;
-  const W = mapCanvas.width, Hh = mapCanvas.height;
-  const s = W / planImg.width;
+  if (!mapBg) return;
+  const W = mapCanvas.width, Hh = mapCanvas.height, s = W / PLAN_W;
   mapCtx.clearRect(0, 0, W, Hh);
-  mapCtx.globalAlpha = 0.92;
-  mapCtx.drawImage(planImg, 0, 0, W, planImg.height * s);
-  mapCtx.globalAlpha = 1;
+  mapCtx.drawImage(mapBg, 0, 0);
   const p = walker.planPos();
   const [px, py] = toPx(p.x, p.y);
   mapCtx.save();
@@ -183,7 +272,7 @@ function drawMap() {
 }
 mapCanvas.addEventListener('click', (e) => {
   const r = mapCanvas.getBoundingClientRect();
-  const s = mapCanvas.width / planImg.width;
+  const s = mapCanvas.width / PLAN_W;
   const px = ((e.clientX - r.left) * (mapCanvas.width / r.width)) / s, py = ((e.clientY - r.top) * (mapCanvas.height / r.height)) / s;
   const x = (px - 40) / 28.5, y = (py - 133) / 27.8;
   walker.teleport(x, y);
@@ -217,93 +306,178 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
-  composer.setSize(innerWidth, innerHeight);
+  applyResolution(); // the pixel budget depends on the window size; also resizes the composer
 });
 
-const clock = new THREE.Clock();
-function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05);
-  frameNo++;
-  if (!shotMode) {
-    walker.update(dt);
+function render() {
+  // the sun's shadow map is rendered once, from everything: un-cull for that frame, then hide hidden rooms again
+  const shadowPass = culler?.enabled && renderer.shadowMap.needsUpdate;
+  if (shadowPass) culler.showAll();
+  if (usePost) post.composer.render();
+  else renderer.render(scene, activeCam);
+  mirrorState.frame++;
+  if (shadowPass) { const p = walker.planPos(); culler.update(p.x, p.y, true); }
+}
+
+let last = performance.now(), prevRendered = false, wasActive = false, fading = false;
+function frame(now) {
+  const dtMs = now - last; last = now;
+  const dt = Math.min(dtMs / 1000, 0.05);
+  walker.update(dt);
+  const moved = walker.dirty;
+  if (moved) walker.dirty = false;
+
+  if (moved) { const p = walker.planPos(); culler.update(p.x, p.y); }
+  if (moved || fading) fading = lights.update(camera.position, dt);
+  const need = moved || fading || forceFrames > 0;
+  if (!need) {
+    // came to rest: one last full-quality refresh of the mirrors, then sleep (no GPU work at all)
+    if (wasActive) { wasActive = false; mirrorState.force = true; render(); mirrorState.force = false; }
+    prevRendered = false;
+    return;
+  }
+  if (forceFrames > 0) forceFrames--;
+  wasActive = true;
+  render();
+  if (prevRendered) quality.sample(dtMs);
+  prevRendered = true;
+
+  if (moved) {
     const p = walker.planPos();
     const r = roomAt(p.x, p.y);
     if (r !== lastRoom) {
       lastRoom = r;
       roomEl.innerHTML = r ? `<b>${r.name}</b>${r.label ? `<span>${r.label}</span>` : ''}` : '';
     }
-    drawMap();
-    autoQuality(dt);
+    mapDirty = true;
   }
-  composer.render(dt);
+  if (mapDirty) { mapDirty = false; drawMap(); }
 }
 
-// Ambient occlusion is the priciest pass: drop it if the first ~1.5 s of walking runs under 40 fps. Q toggles it.
-const perfSamples = [];
-let qualityDecided = params.has('ao');
-function setAO(on) {
-  ao.enabled = on;
-  const el = document.getElementById('quality');
-  if (el) el.textContent = on ? 'High' : 'Fast';
+// Programs differ for the screen (tone mapping + sRGB output) and for render targets (mirrors, the High-tier composer),
+// and the light count is baked into every shader. This compiles the variants a tier will draw, in parallel in the
+// driver and in small time slices on our side, without touching what is currently on screen - so neither start-up nor
+// a quality switch stalls on a first frame that needs a new shader.
+function programKey(o) {
+  const g = o.geometry, a = g.attributes;
+  return [o.material.uuid, o.receiveShadow, !!a.uv1, !!a.color, !!a.normal, !!a.tangent, o.isInstancedMesh, o.isSkinnedMesh, !!g.morphAttributes.position].join('|');
 }
-function autoQuality(dt) {
-  if (qualityDecided || frameNo < 30) return;
-  perfSamples.push(dt);
-  if (perfSamples.length < 90) return;
-  qualityDecided = true;
-  const fps = perfSamples.length / perfSamples.reduce((a, b) => a + b, 0);
-  if (fps < 40) setAO(false);
+async function precompile(t, sliceMs = 8) {
+  const reps = new Map(), mirrorRT = [];
+  scene.traverse((o) => {
+    if (o.isReflector) mirrorRT.push(o.getRenderTarget());
+    if (!o.isMesh || !o.material || Array.isArray(o.material) || !(o.visible || o.userData.culled)) return;
+    const k = programKey(o);
+    if (!reps.has(k)) reps.set(k, o);
+  });
+  const targets = (t.composer && post) ? [post.composer.readBuffer] : [null, ...(mirrorRT.length ? [mirrorRT[0]] : [])];
+  const list = [...reps.values()], jobs = [];
+  for (let i = 0; i < list.length;) {
+    const t0 = performance.now();
+    const batch = () => {
+      const prev = renderer.getRenderTarget();
+      while (i < list.length && performance.now() - t0 < sliceMs) {
+        const mesh = list[i++];
+        for (const rt of targets) { renderer.setRenderTarget(rt); jobs.push(renderer.compileAsync(mesh, activeCam, scene)); }
+      }
+      renderer.setRenderTarget(prev);
+    };
+    if (lights && lights.enabled) lights.withBudget(t.lights, batch); else batch();
+    await nextFrame();
+  }
+  await Promise.all(jobs);
 }
-addEventListener('keydown', (e) => {
-  if (e.code === 'KeyQ') { qualityDecided = true; setAO(!ao.enabled); }
-});
 
-// Runtime budget for what the pieces built:
-//  - transmission materials force a full extra opaque render whenever one is on screen -> plain alpha instead
-//  - each planar Reflector re-renders the whole house -> only refresh a mirror when the viewer is near it
-let frameNo = 0;
-function optimizeScene() {
-  const p = new THREE.Vector3();
+// Everything is uploaded to the GPU and every shader compiled while the loading screen is still up, so walking into
+// a new room never stalls. Texture uploads are time-sliced so the page stays responsive.
+const TEX_KEYS = ['map', 'normalMap', 'roughnessMap', 'aoMap', 'metalnessMap', 'emissiveMap', 'bumpMap', 'alphaMap', 'lightMap', 'envMap'];
+async function prewarm() {
+  const texs = new Set();
   scene.traverse((o) => {
     const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-    for (const mt of mats) if (mt.transmission > 0) { mt.transmission = 0; mt.needsUpdate = true; }
-    if (o.isReflector && !shotMode) {
-      const update = o.onBeforeRender;
-      o.onBeforeRender = function (r, s, cam, ...rest) {
-        o.getWorldPosition(p);
-        if (frameNo < 3 || (cam.position.distanceTo(p) < 4.5 && frameNo % 2 === 0)) update.call(this, r, s, cam, ...rest);
-      };
-    }
+    for (const mt of mats) for (const k of TEX_KEYS) if (mt[k]?.isTexture && !mt[k].isRenderTargetTexture && mt[k] !== scene.environment && (mt[k].isCompressedTexture ? mt[k].mipmaps.length : mt[k].image)) texs.add(mt[k]);
   });
+  const list = [...texs];
+  for (let i = 0; i < list.length;) {
+    const t0 = performance.now();
+    while (i < list.length && performance.now() - t0 < 10) renderer.initTexture(list[i++]);
+    setStatus(`Preparing graphics… ${Math.round((i / list.length) * 100)}%`, 0.8 + 0.15 * (i / list.length));
+    await nextFrame();
+  }
+  console.info(`[load] textures initialised @${Math.round(performance.now())}ms`);
+  setStatus('Compiling shaders…', 0.96);
+  await precompile(quality.settings);
+  console.info(`[load] shaders compiled @${Math.round(performance.now())}ms`);
 }
 
+window.__three = { renderer, scene, get composer() { return post?.composer; } };
+window.__quality = quality;
+window.__cull = () => culler;
+window.__roomAt = (x, y) => !!roomAt(x, y);
+window.__renderOnce = () => { mirrorState.force = true; render(); mirrorState.force = false; }; // test hook (tools/cull-test.mjs)
 window.__stats = () => {
-  const lights = {};
-  let shadowLights = 0, meshes = 0;
+  const lightCount = {};
+  let shadowLights = 0, meshes = 0, visibleLights = 0;
   scene.traverse((o) => {
-    if (o.isLight) { lights[o.type] = (lights[o.type] || 0) + 1; if (o.castShadow) shadowLights++; }
+    if (o.isLight) { lightCount[o.type] = (lightCount[o.type] || 0) + 1; if (o.castShadow) shadowLights++; if (o.visible) visibleLights++; }
     if (o.isMesh) meshes++;
   });
   const i = renderer.info;
-  return { lights, shadowLights, meshes, calls: i.render.calls, triangles: i.render.triangles, textures: i.memory.textures, geometries: i.memory.geometries, programs: i.programs?.length };
+  return { tier: quality.tier, res: quality.res, lights: lightCount, visibleLights, shadowLights, meshes, calls: i.render.calls, triangles: i.render.triangles, textures: i.memory.textures, geometries: i.memory.geometries, programs: i.programs?.length };
 };
 window.__dbg = () => ({ tex: pendingTex.size, models: pendingModels.size, phase: window.__phase, urls: [...pendingModels].map((p) => p.url) });
+window.__views = () => Object.keys(views);
+
+const mark = (s) => console.info(`[load] ${s} @${Math.round(performance.now())}ms`);
 async function start() {
+  mark('start');
   window.__phase = 'pieces';
+  setStatus('Building rooms…', 0.05);
+  const progress = setInterval(() => {
+    const { requested, done } = loadStats;
+    if (requested) setStatus(window.__phase === 'assets' ? `Loading textures & models… ${done}/${requested}` : 'Building rooms…', 0.1 + 0.6 * (done / requested));
+  }, 120);
   await Promise.all([hdrP, loadPieces]);
+  mark('pieces+env built');
   window.__phase = 'assets';
   // wait for every texture/model requested during build
   while (pendingTex.size || pendingModels.size) await Promise.allSettled([...pendingTex, ...pendingModels]);
-  window.__phase = 'compile';
-  optimizeScene();
+  clearInterval(progress);
+  mark('assets loaded');
+  window.__phase = 'optimize';
+  setStatus('Optimizing…', 0.75);
+  stripTransmission(scene);
+  convertAreaLights(scene);
+  const merged = mergeStatic(scene, { skip: [shell.ceiling, shell.roof] }); // top view toggles those two
+  console.info(`merged static meshes: ${merged.before} -> ${merged.after}`);
+  mirrors = setupMirrors(scene, mirrorState);
+  lights = new LightBudget(scene);
+  culler = new Culler(scene, { skip: [shell.ceiling, shell.roof] });
+  culler.enabled = !shotMode ? params.get('cull') !== '0' : params.get('cull') === '1';
+  scene.matrixWorldAutoUpdate = false; // everything is static: no need to re-walk ~3000 nodes every frame
   if (shotView) setView(shotView);
-  if (topPiece) setTop(topPiece);
+  if (topPiece) { await ensurePost(); setTop(topPiece); }
+  mark('merged');
+  window.__phase = 'compile';
+  await applyTier(true);
+  mark('tier applied');
+  camera.updateMatrixWorld(true);
+  if (params.get('budget') === '0' || (shotMode && !params.has('budget'))) lights.enabled = false;
+  await prewarm();
+  mark('prewarmed');
+  // first frames behind the loading screen: builds the shadow map and the AO/mirror targets so the reveal is smooth
   renderer.shadowMap.needsUpdate = true;
-  renderer.compile(scene, activeCam);
+  mirrorState.force = true;
+  render();
+  console.info(`[load] first render @${Math.round(performance.now())}ms programs=${renderer.info.programs.length}`);
+  render();
+  mirrorState.force = false;
+  mark('first frames rendered');
   document.body.classList.add('loaded');
+  setTimeout(() => loaderEl.remove(), 900);
   if (shotMode) {
     document.body.classList.add('shot');
-    for (let i = 0; i < 6; i++) composer.render(0.016);
+    for (let i = 0; i < 6; i++) render();
     window.__ready = true;
     window.__views = Object.keys(views);
     return;
@@ -311,4 +485,3 @@ async function start() {
   renderer.setAnimationLoop(frame);
 }
 start();
-window.__views = () => Object.keys(views);

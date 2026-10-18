@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import { getKTX2 } from './ktx2.js';
 
-// Shared PBR material library. Textures live in public/assets/ph/<id>/{diff,nor,rough,ao}.jpg.
+// Shared PBR material library. Textures live in public/assets/ph/<id>/{diff,nor,orm}.ktx2 (built from assets-src/).
 // Every surface built by shell/rooms uses world-space UVs (see worldUV), so `size` = metres per texture repeat.
 
 const loader = new THREE.TextureLoader();
@@ -9,16 +10,48 @@ let maxAniso = 8;
 export const pending = new Set();
 
 export function setAnisotropy(n) { maxAniso = n; }
+export const getAnisotropy = () => maxAniso;
 
-export function tex(url, { srgb = false, repeat = 1 } = {}) {
+export const loadStats = { requested: 0, done: 0 };
+
+// Texture sets are shipped as GPU-compressed KTX2 (see tools/optimize-assets.mjs). Rooms still ask for the original
+// names, so map them: diff -> diff.ktx2, nor -> nor.ktx2, rough/ao -> orm.ktx2 (AO in R, roughness in G: exactly the
+// channels aoMap and roughnessMap read, so one texture serves both).
+const LEGACY = /^(.*assets\/ph\/[^/]+\/)(diff|nor|rough|ao)\.(?:jpg|png)$/;
+function resolveUrl(url) {
+  const m = LEGACY.exec(url);
+  return m ? m[1] + (m[2] === 'rough' || m[2] === 'ao' ? 'orm' : m[2]) + '.ktx2' : url;
+}
+
+export function tex(rawUrl, { srgb = false, repeat = 1 } = {}) {
+  const url = resolveUrl(rawUrl);
   const key = url + (srgb ? ':s' : '') + ':' + repeat;
   if (texCache.has(key)) return texCache.get(key);
-  // TextureLoader hands back the texture immediately; `pending` lets the app wait for every image.
+  // The texture object is handed back immediately (materials are built synchronously); `pending` lets the app wait
+  // until every image has really arrived. KTX2 data is decoded asynchronously, so a CompressedTexture shell is
+  // returned and filled in on arrival.
   let done;
   const p = new Promise((res) => (done = res));
   pending.add(p);
-  p.then(() => pending.delete(p));
-  const t = loader.load(url, () => done(), undefined, () => { console.warn('missing texture', url); done(); });
+  loadStats.requested++;
+  p.then(() => { pending.delete(p); loadStats.done++; });
+  let t;
+  if (url.endsWith('.ktx2')) {
+    t = new THREE.CompressedTexture([], 4, 4);
+    getKTX2().load(url, (real) => {
+      t.mipmaps = real.mipmaps;
+      t.image = real.image;
+      t.format = real.format;
+      t.type = real.type;
+      t.minFilter = real.minFilter;
+      t.magFilter = real.magFilter;
+      t.generateMipmaps = false;
+      t.needsUpdate = true;
+      done();
+    }, undefined, () => { console.warn('missing texture', url); done(); });
+  } else {
+    t = loader.load(url, () => done(), undefined, () => { console.warn('missing texture', url); done(); });
+  }
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   t.anisotropy = maxAniso;
@@ -39,8 +72,8 @@ export function pbr(id, o = {}) {
   const m = new M({
     map: noMap ? null : tex(base + 'diff.jpg', { srgb: true }),
     normalMap: tex(base + 'nor.jpg'),
-    roughnessMap: tex(base + 'rough.jpg'),
-    aoMap: ao ? tex(base + 'ao.jpg') : null,
+    roughnessMap: tex(base + 'rough.jpg'), // -> orm.ktx2 (G channel)
+    aoMap: ao ? tex(base + 'ao.jpg') : null, // -> the same orm.ktx2 (R channel)
     roughness,
     color: color ? new THREE.Color(color) : new THREE.Color(0xffffff),
     ...rest,
