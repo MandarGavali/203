@@ -5,7 +5,7 @@ import { buildShell } from './shell.js';
 import { makeCtx, pendingModels } from './lib/ctx.js';
 import { pending as pendingTex, setAnisotropy, loadStats } from './lib/materials.js';
 import { initKTX2, setMipDrop } from './lib/ktx2.js';
-import { Quality, markLoading } from './lib/quality.js';
+import { Quality, markLoading, crashedDuring } from './lib/quality.js';
 import { LightBudget } from './lib/lightBudget.js';
 import { Culler } from './lib/cull.js';
 import { mergeStatic, stripTransmission, setupMirrors, capCanvasTextures, convertAreaLights, freeGeometryAfterUpload, freeTextureData } from './lib/optimize.js';
@@ -48,6 +48,13 @@ if (quality.software) {
   n.classList.add('show');
   n.querySelector('button').onclick = () => n.classList.remove('show');
 }
+if (quality.safe) {
+  const n = document.getElementById('notice');
+  n.querySelector('span').innerHTML = '<b>Loading in light mode</b> - the last attempt on this device stopped during “'
+    + (crashedDuring() || 'loading').replace(/[<>&]/g, '') + '”. If it fails again, please report that step.';
+  n.classList.add('show');
+  n.querySelector('button').onclick = () => n.classList.remove('show');
+}
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 
 // ---------- renderer ----------
@@ -82,7 +89,7 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 setAnisotropy(Math.min(tier0.aniso, renderer.capabilities.getMaxAnisotropy()));
 initKTX2(renderer, quality.constrained ? 1 : 4);
 setMipDrop(quality.safe ? 2 : quality.constrained ? 1 : 0);
-if (quality.safe) renderer.shadowMap.enabled = false; // last visit crashed while loading: bare minimum this time
+if (!tier0.shadow) renderer.shadowMap.enabled = false; // phones: no shadow pass, much smaller shaders
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.05, 200);
@@ -114,7 +121,7 @@ const centre = new THREE.Vector3(m(19.5), 0, m(18.5));
 sun.position.copy(centre).add(new THREE.Vector3(-9, 11, 14));
 sun.target.position.copy(centre);
 sun.castShadow = true;
-sun.shadow.mapSize.set(tier0.shadow, tier0.shadow);
+sun.shadow.mapSize.set(tier0.shadow || 512, tier0.shadow || 512);
 Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 11, bottom: -11, near: 1, far: 50 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.02;
@@ -156,7 +163,7 @@ async function buildPiece([path, load]) {
     await mod.default(ctx);
     // phones: shrink, upload and free this room's painted canvases now, so only one room's worth is ever in memory
     if (quality.constrained && !shotMode) {
-      capCanvasTextures(ctx.group, quality.safe ? 256 : quality.settings.canvasMax, (t) => { renderer.initTexture(t); freeTextureData(t); });
+      capCanvasTextures(ctx.group, quality.settings.canvasMax, (t) => { renderer.initTexture(t); freeTextureData(t); });
       await new Promise((r) => setTimeout(r, 30)); // breathing room for the garbage collector between rooms
     }
     window.__timing[id] = Math.round(performance.now() - t0);
@@ -247,7 +254,7 @@ async function applyTier(initial = false) {
   usePost = t.composer && !!post;
   if (appliedTier !== quality.tier) {
     appliedTier = quality.tier;
-    if (sun.shadow.mapSize.x !== t.shadow) {
+    if (t.shadow && sun.shadow.mapSize.x !== t.shadow) {
       sun.shadow.map?.dispose(); sun.shadow.map = null;
       sun.shadow.mapSize.set(t.shadow, t.shadow);
     }
@@ -413,6 +420,7 @@ async function precompile(t, sliceMs = 8) {
       renderer.setRenderTarget(prev);
     };
     if (lights && lights.enabled) lights.withBudget(t.lights, batch); else batch();
+    if (quality.constrained) await Promise.all(jobs); // phones: never more than a few shaders compiling at once
     await nextFrame();
   }
   await Promise.all(jobs);
@@ -440,6 +448,7 @@ async function prewarm() {
   }
   if (!shotMode) freeGeometryAfterUpload(scene);
   console.info(`[load] textures initialised @${Math.round(performance.now())}ms`);
+  if (!shotMode) markLoading('compiling shaders');
   setStatus('Compiling shaders…', 0.96);
   await precompile(quality.settings);
   console.info(`[load] shaders compiled @${Math.round(performance.now())}ms`);
@@ -463,10 +472,9 @@ window.__stats = () => {
 window.__dbg = () => ({ tex: pendingTex.size, models: pendingModels.size, phase: window.__phase, urls: [...pendingModels].map((p) => p.url) });
 window.__views = () => Object.keys(views);
 
-const mark = (s) => console.info(`[load] ${s} @${Math.round(performance.now())}ms`);
+const mark = (s) => { console.info(`[load] ${s} @${Math.round(performance.now())}ms`); if (!shotMode) markLoading(s); };
 async function start() {
   mark('start');
-  if (!shotMode) markLoading(true); // cleared once loaded; still set on the next visit = this load crashed
   window.__phase = 'pieces';
   setStatus('Building rooms…', 0.05);
   const progress = setInterval(() => {
@@ -503,7 +511,7 @@ async function start() {
   camera.updateMatrixWorld(true);
   if (params.get('budget') === '0' || (shotMode && !params.has('budget'))) lights.enabled = false;
   await prewarm();
-  mark('prewarmed');
+  mark('prewarmed (first frame next)');
   // first frames behind the loading screen: builds the shadow map and the AO/mirror targets so the reveal is smooth
   renderer.shadowMap.needsUpdate = true;
   mirrorState.force = true;
