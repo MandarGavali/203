@@ -8,7 +8,7 @@ import { initKTX2 } from './lib/ktx2.js';
 import { Quality } from './lib/quality.js';
 import { LightBudget } from './lib/lightBudget.js';
 import { Culler } from './lib/cull.js';
-import { mergeStatic, stripTransmission, setupMirrors, capCanvasTextures, convertAreaLights } from './lib/optimize.js';
+import { mergeStatic, stripTransmission, setupMirrors, capCanvasTextures, convertAreaLights, freeGeometryAfterUpload, freeTextureData } from './lib/optimize.js';
 import { Walker } from './controls.js';
 import { defaultViews } from './views.js';
 
@@ -40,6 +40,14 @@ function setStatus(text, pct) {
     barEl.style.width = `${(barPct * 100).toFixed(0)}%`;
   }
 }
+// Hardware acceleration off = WebGL on the CPU: slow however light the scene is, and it loads the whole PC. Say so.
+if (quality.software) {
+  const n = document.getElementById('notice');
+  n.querySelector('span').innerHTML = '<b>Graphics acceleration is off in this browser</b>, so the 3D view is drawn by the CPU and will be slow. '
+    + 'Turn on <b>“Use graphics acceleration when available”</b> (Settings → System) and restart the browser.';
+  n.classList.add('show');
+  n.querySelector('button').onclick = () => n.classList.remove('show');
+}
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 
 // ---------- renderer ----------
@@ -59,8 +67,18 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = false; // nothing moves: render the sun's shadow map once after load (and after a tier change)
 document.getElementById('app').appendChild(renderer.domElement);
 // GPU resets (driver update, laptop GPU switch, sleep) drop the context: three.js rebuilds everything from the data it kept
-renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); toast('Graphics were interrupted - recovering…'); });
-renderer.domElement.addEventListener('webglcontextrestored', () => { toast(''); renderer.shadowMap.needsUpdate = true; forceFrames = Math.max(forceFrames, 3); });
+// GPU resets (driver update, laptop GPU switch, low memory on phones) drop the context. The JS-side copies of meshes and
+// textures are freed after upload to save memory, so recover by reloading - at most once a minute, to avoid loops.
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  let last = 0;
+  try { last = +sessionStorage.getItem('house3d.reloadedAt') || 0; } catch { /* storage blocked */ }
+  if (Date.now() - last > 60000) {
+    try { sessionStorage.setItem('house3d.reloadedAt', String(Date.now())); } catch { /* storage blocked */ }
+    toast('Graphics were interrupted - reloading…');
+    setTimeout(() => location.reload(), 800);
+  } else toast('Graphics keep being interrupted - try Quality: Low, or close other tabs and reload.');
+});
 setAnisotropy(Math.min(tier0.aniso, renderer.capabilities.getMaxAnisotropy()));
 initKTX2(renderer);
 
@@ -125,20 +143,27 @@ const views = { ...defaultViews };
 // ?only=bed1,dining loads just those pieces (faster screenshots while iterating on one piece)
 const only = params.get('only')?.split(',');
 window.__timing = {};
-const loadPieces = Promise.all(Object.entries(modules).map(async ([path, load]) => {
+async function buildPiece([path, load]) {
   const id = path.match(/rooms\/(.+)\.js$/)[1];
   if (only && !only.includes(id)) return;
   try {
     const t0 = performance.now();
     const mod = await load();
     if (mod.views) Object.assign(views, mod.views);
-    await mod.default(makeCtx(scene, renderer, colliders, id));
+    const ctx = makeCtx(scene, renderer, colliders, id);
+    await mod.default(ctx);
+    // phones: shrink, upload and free this room's painted canvases now, so only one room's worth is ever in memory
+    if (quality.constrained && !shotMode) capCanvasTextures(ctx.group, quality.settings.canvasMax, (t) => { renderer.initTexture(t); freeTextureData(t); });
     window.__timing[id] = Math.round(performance.now() - t0);
     console.info(`piece ${id} built in ${window.__timing[id]} ms`);
   } catch (e) {
     console.error('piece failed', id, e);
   }
-}));
+}
+// on phones, build one room at a time: building them all at once briefly needs far more memory than the result
+const loadPieces = quality.constrained
+  ? Object.entries(modules).reduce((p, e) => p.then(() => buildPiece(e)), Promise.resolve())
+  : Promise.all(Object.entries(modules).map(buildPiece));
 
 // ---------- camera modes ----------
 let activeCam = camera;
@@ -370,7 +395,7 @@ async function precompile(t, sliceMs = 8) {
     const k = programKey(o);
     if (!reps.has(k)) reps.set(k, o);
   });
-  const targets = (t.composer && post) ? [post.composer.readBuffer] : [null, ...(mirrorRT.length ? [mirrorRT[0]] : [])];
+  const targets = (t.composer && post) ? [post.composer.readBuffer] : [null, ...(mirrorRT.length && !t.mirror.off ? [mirrorRT[0]] : [])];
   const list = [...reps.values()], jobs = [];
   for (let i = 0; i < list.length;) {
     const t0 = performance.now();
@@ -400,10 +425,15 @@ async function prewarm() {
   const list = [...texs];
   for (let i = 0; i < list.length;) {
     const t0 = performance.now();
-    while (i < list.length && performance.now() - t0 < 10) renderer.initTexture(list[i++]);
+    while (i < list.length && performance.now() - t0 < 10) {
+      const t = list[i++];
+      renderer.initTexture(t);
+      if (!shotMode) freeTextureData(t);
+    }
     setStatus(`Preparing graphics… ${Math.round((i / list.length) * 100)}%`, 0.8 + 0.15 * (i / list.length));
     await nextFrame();
   }
+  if (!shotMode) freeGeometryAfterUpload(scene);
   console.info(`[load] textures initialised @${Math.round(performance.now())}ms`);
   setStatus('Compiling shaders…', 0.96);
   await precompile(quality.settings);

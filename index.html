@@ -37,6 +37,10 @@
     #help kbd { font: 600 11px Inter, sans-serif; background: #fff; border-radius: 4px; padding: 1px 5px; box-shadow: 0 1px 0 #d5cfc4; }
     #toast { left: 50%; top: 16px; transform: translate(-50%, -8px); padding: 8px 16px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; z-index: 5; }
     #toast.show { opacity: 1; transform: translate(-50%, 0); }
+    #notice { left: 50%; top: 16px; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px)); padding: 12px 40px 12px 16px; font-size: 13px; line-height: 1.5; z-index: 20; display: none; }
+    #notice.show { display: block; }
+    #notice b { color: var(--accent); }
+    #notice button { position: absolute; right: 8px; top: 8px; border: 0; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: #6b655c; }
     #cross { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: rgba(255,255,255,.85); box-shadow: 0 0 0 1px rgba(0,0,0,.25); display: none; }
     body.locked #cross { display: block; }
     body.locked #help .click { display: none; }
@@ -57,6 +61,7 @@
   <div id="minimap-wrap" class="panel"><canvas id="minimap" width="420" height="492"></canvas></div>
   <div id="jump" class="panel"></div>
   <div id="help" class="panel"><span class="keys"><span class="click">Click to look around<br></span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk &middot; <kbd>Shift</kbd> faster &middot; <kbd>Esc</kbd> release<br>Click the map to jump &middot; <kbd>Q</kbd> </span>quality: <button id="quality" title="Cycle graphics quality: Auto, High, Medium, Low">Auto</button></div>
+  <div id="notice" class="panel" role="alert"><button aria-label="Dismiss">&times;</button><span></span></div>
   <div id="toast" class="panel" role="status" aria-live="polite"></div>
   <div id="cross"></div>
   <script type="module" src="/src/main.js"></script>
