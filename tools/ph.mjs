@@ -1,13 +1,15 @@
 // Poly Haven (CC0) fetcher.
 //   node tools/ph.mjs list <textures|models|hdris> [category] [search]
-//   node tools/ph.mjs get <id> [res=1k]        -> public/assets/ph/<id>/...
+//   node tools/ph.mjs get <id> [res=1k]        -> assets-src/ph/<id>/...   (then `npm run assets` builds the runtime copy in public/)
 // Textures land as diff.jpg / nor.jpg / rough.jpg / ao.jpg (+ arm.jpg, disp.jpg when present).
 // Models land as <id>.gltf + its bin + textures (paths preserved). HDRIs as <id>.hdr.
 import fs from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..');
-const out = (...p) => path.join(root, 'public', 'assets', 'ph', ...p);
+// Full-size originals live in assets-src/; `npm run assets` (tools/optimize-assets.mjs) turns them into the lean, GPU-compressed
+// copies the app actually loads from public/assets/.
+const out = (...p) => path.join(root, 'assets-src', 'ph', ...p);
 const api = (u) => fetch('https://api.polyhaven.com' + u, { headers: { 'User-Agent': 'house3d-builder' } }).then((r) => {
   if (!r.ok) throw new Error(`${r.status} ${u}`);
   return r.json();
@@ -49,7 +51,7 @@ if (cmd === 'list') {
     const { fixDir } = await import('./fix_bin.mjs');
     fixDir(out(id)); // .bin -> .buf (Chrome here never finishes .bin URLs)
   }
-  console.log('ok', id, '->', out(id));
+  console.log('ok', id, '->', out(id), '- now run: npm run assets');
 } else {
   console.log('usage: list <textures|models|hdris> [category] [search] | get <id> [res]');
 }

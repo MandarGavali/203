@@ -1,1 +1,174 @@
-{"asset":{"generator":"Khronos glTF Blender I/O v1.6.16","version":"2.0"},"scene":0,"scenes":[{"name":"Scene","nodes":[0]}],"nodes":[{"mesh":0,"name":"food_pomegranate_01"}],"materials":[{"doubleSided":true,"name":"food_pomegranate_01","normalTexture":{"index":0},"pbrMetallicRoughness":{"baseColorTexture":{"index":1},"metallicFactor":0,"metallicRoughnessTexture":{"index":2}}}],"meshes":[{"name":"pomegranate_50k_uv.001","primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],"textures":[{"sampler":0,"source":0},{"sampler":0,"source":1},{"sampler":0,"source":2}],"images":[{"mimeType":"image/jpeg","name":"food_pomegranate_01_nor_gl","uri":"textures/food_pomegranate_01_nor_gl_1k.jpg"},{"mimeType":"image/jpeg","name":"food_pomegranate_01_diff","uri":"textures/food_pomegranate_01_diff_1k.jpg"},{"mimeType":"image/jpeg","name":"food_pomegranate_01_rough","uri":"textures/food_pomegranate_01_rough_1k.jpg"}],"accessors":[{"bufferView":0,"componentType":5126,"count":4593,"max":[0.0545337088406086,0.11526758968830109,0.05773773044347763],"min":[-0.0597374252974987,0.0003110244870185852,-0.05761651322245598],"type":"VEC3"},{"bufferView":1,"componentType":5126,"count":4593,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":4593,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":24426,"type":"SCALAR"}],"bufferViews":[{"buffer":0,"byteLength":55116,"byteOffset":0},{"buffer":0,"byteLength":55116,"byteOffset":55116},{"buffer":0,"byteLength":36744,"byteOffset":110232},{"buffer":0,"byteLength":48852,"byteOffset":146976}],"samplers":[{"magFilter":9729,"minFilter":9987}],"buffers":[{"byteLength":195828,"uri":"food_pomegranate_01.buf"}]}
+{
+  "asset": {
+    "generator": "glTF-Transform v4.5.1",
+    "version": "2.0"
+  },
+  "accessors": [
+    {
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 9768,
+      "bufferView": 0,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 2084,
+      "max": [
+        0.0545337088406086,
+        0.1151430532336235,
+        0.05773773044347763
+      ],
+      "min": [
+        -0.0597374252974987,
+        0.0003110244870185852,
+        -0.05761651322245598
+      ],
+      "bufferView": 1,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 2084,
+      "bufferView": 1,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 2084,
+      "bufferView": 1,
+      "byteOffset": 24
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 19536,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 19536,
+      "byteLength": 66688,
+      "byteStride": 32,
+      "target": 34962
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "extensions": {
+        "KHR_texture_basisu": {
+          "source": 1
+        }
+      }
+    },
+    {
+      "sampler": 0,
+      "extensions": {
+        "KHR_texture_basisu": {
+          "source": 0
+        }
+      }
+    },
+    {
+      "sampler": 0,
+      "extensions": {
+        "KHR_texture_basisu": {
+          "source": 2
+        }
+      }
+    }
+  ],
+  "images": [
+    {
+      "name": "food_pomegranate_01_nor_gl",
+      "mimeType": "image/ktx2",
+      "uri": "textures/food_pomegranate_01_nor_gl_1k.ktx2"
+    },
+    {
+      "name": "food_pomegranate_01_diff",
+      "mimeType": "image/ktx2",
+      "uri": "textures/food_pomegranate_01_diff_1k.ktx2"
+    },
+    {
+      "name": "food_pomegranate_01_rough",
+      "mimeType": "image/ktx2",
+      "uri": "textures/food_pomegranate_01_rough_1k.ktx2"
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "food_pomegranate_01.buf",
+      "byteLength": 86224
+    }
+  ],
+  "materials": [
+    {
+      "name": "food_pomegranate_01",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      },
+      "normalTexture": {
+        "index": 1
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "pomegranate_50k_uv.001",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 1,
+            "NORMAL": 2,
+            "TEXCOORD_0": 3
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 0
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "food_pomegranate_01",
+      "mesh": 0
+    }
+  ],
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0,
+  "extensionsUsed": [
+    "KHR_texture_basisu"
+  ],
+  "extensionsRequired": [
+    "KHR_texture_basisu"
+  ]
+}

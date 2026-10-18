@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { normalCanvasFromHeight } from '../lib/normalmap.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 
 const F = 0.3048;
@@ -46,17 +47,7 @@ function toTex(c, srgb = true) {
 }
 // greyscale height canvas -> tangent-space normal map
 function normalFrom(hc, strength = 2) {
-  const w = hc.width, h = hc.height;
-  const src = hc.getContext('2d').getImageData(0, 0, w, h).data;
-  const out = canvas(w, h), og = out.getContext('2d'), od = og.createImageData(w, h);
-  const H = (x, y) => src[(((y + h) % h) * w + ((x + w) % w)) * 4] / 255;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const dx = (H(x + 1, y) - H(x - 1, y)) * strength, dy = (H(x, y + 1) - H(x, y - 1)) * strength;
-    const l = Math.hypot(dx, dy, 1), i = (y * w + x) * 4;
-    od.data[i] = (-dx / l * 0.5 + 0.5) * 255; od.data[i + 1] = (dy / l * 0.5 + 0.5) * 255; od.data[i + 2] = (1 / l * 0.5 + 0.5) * 255; od.data[i + 3] = 255;
-  }
-  og.putImageData(od, 0, 0);
-  return toTex(out, false);
+  return toTex(normalCanvasFromHeight(hc, strength), false);
 }
 
 // black-galaxy granite: near-black grain with sparse bronze and quartz flecks

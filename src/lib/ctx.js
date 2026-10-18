@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FT, CEILING, rooms } from '../plan.js';
-import { lib, pbr, worldUV, tex } from './materials.js';
+import { lib, pbr, worldUV, tex, loadStats, getAnisotropy } from './materials.js';
+import { getKTX2 } from './ktx2.js';
 
 // The API every room module receives. All positions are PLAN FEET: x east, y south, h up (feet above floor).
 //
@@ -26,12 +27,15 @@ export const pendingModels = new Set();
 
 function loadModel(url) {
   if (!modelCache.has(url)) {
+    if (!gltf.ktx2Loader) gltf.setKTX2Loader(getKTX2()); // models ship GPU-compressed KTX2 textures
+    loadStats.requested++;
     const p = gltf.loadAsync(url).then((g) => {
+      loadStats.done++;
       g.scene.traverse((o) => {
         if (o.isMesh) {
           o.castShadow = o.receiveShadow = true;
           const mats = Array.isArray(o.material) ? o.material : [o.material];
-          for (const mt of mats) if (mt.map) mt.map.anisotropy = 8;
+          for (const mt of mats) if (mt.map) mt.map.anisotropy = getAnisotropy();
         }
       });
       return g.scene;
