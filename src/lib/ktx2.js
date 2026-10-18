@@ -6,6 +6,14 @@ let loader = null;
 
 export function initKTX2(renderer, workers = 4) {
   loader = new KTX2Loader().setTranscoderPath(import.meta.env.BASE_URL + 'basis/').setWorkerLimit(workers).detectSupport(renderer);
+  // test hook: ?ktx=etc / ?ktx=astc / ?ktx=raw forces the transcode target phones would get
+  const force = new URLSearchParams(location.search).get('ktx');
+  if (force) {
+    const c = loader.workerConfig;
+    for (const k of Object.keys(c)) if (k.endsWith('Supported')) c[k] = false;
+    if (force === 'etc') c.etc2Supported = c.etc1Supported = true;
+    if (force === 'astc') c.astcSupported = true;
+  }
   return loader;
 }
 

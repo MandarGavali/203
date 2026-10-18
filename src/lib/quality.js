@@ -47,16 +47,25 @@ export function softwareRendering(gpu = gpuName()) {
   } catch { return false; }
 }
 
-/** Phones/tablets and low-RAM devices: the browser kills a tab long before desktop limits, so memory comes first. */
-// If the tab died while loading (phones: "Aw, Snap!"), the next visit starts in a minimal "safe" mode.
-const LOADING_KEY = 'house3d.loadingSince';
-export function previousLoadCrashed() {
-  try { const t = +localStorage.getItem(LOADING_KEY); return t > 0 && Date.now() - t < 30 * 60 * 1000; } catch { return false; }
-}
-export function markLoading(on) {
-  try { if (on) localStorage.setItem(LOADING_KEY, String(Date.now())); else localStorage.removeItem(LOADING_KEY); } catch { /* storage blocked */ }
+// If the tab died while loading (phones: "Aw, Snap!"), the next visit starts in a minimal "safe" mode and can say in
+// which loading step the last attempt died (the breadcrumb survives the crash in localStorage).
+const LOADING_KEY = 'house3d.loading';
+let lastCrash = null;
+try {
+  const v = JSON.parse(localStorage.getItem(LOADING_KEY));
+  if (v && Date.now() - v.t < 30 * 60 * 1000) lastCrash = v;
+} catch { /* storage blocked or old format */ }
+export const previousLoadCrashed = () => !!lastCrash;
+export const crashedDuring = () => lastCrash?.step || '';
+/** markLoading('step name') while loading, markLoading(false) once the walkthrough is shown. */
+export function markLoading(step) {
+  try {
+    if (step) localStorage.setItem(LOADING_KEY, JSON.stringify({ t: Date.now(), step: String(step) }));
+    else localStorage.removeItem(LOADING_KEY);
+  } catch { /* storage blocked */ }
 }
 
+/** Phones/tablets and low-RAM devices: the browser kills a tab long before desktop limits, so memory comes first. */
 export const memoryConstrained = () => matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) || (navigator.deviceMemory || 8) <= 4;
 
 export function detectTier(gpu = gpuName()) {
@@ -99,7 +108,14 @@ export class Quality {
     this.settled = 0;
   }
 
-  get settings() { return TIERS[this.tier]; }
+  get settings() {
+    const t = TIERS[this.tier];
+    if (!this.constrained) return t;
+    // Phones: shadows off (the shadow code is the bulk of every shader and needs its own pass), fewer lights, and a
+    // smaller screen buffer. Safe mode (previous load crashed) goes to the bare minimum.
+    return { ...t, shadow: 0, lights: Math.min(t.lights, this.safe ? 2 : 3), dprMax: Math.min(t.dprMax, this.safe ? 1 : 1.25), maxMP: Math.min(t.maxMP, 1.2),
+      canvasMax: Math.min(t.canvasMax, this.safe ? 256 : 512), mirror: { ...t.mirror, off: true } };
+  }
   get label() { return this.mode === 'auto' ? `Auto · ${TIERS[this.tier].label}` : TIERS[this.tier].label; }
 
   /** Cycle Auto -> High -> Medium -> Low (button / Q key). */
