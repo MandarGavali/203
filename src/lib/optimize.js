@@ -99,9 +99,12 @@ export function setupMirrors(scene, state) {
     list.push(o);
     const update = o.onBeforeRender;
     const rt = o.getRenderTarget();
-    o.userData.mirror = { w: rt.width, h: rt.height, samples: rt.samples, seen: false };
+    // Low tier: a plain polished-metal stand-in instead of a live reflection (no extra render, no extra shaders)
+    const fake = new THREE.MeshStandardMaterial({ color: 0xc9ced1, metalness: 1, roughness: 0.08 });
+    o.userData.mirror = { w: rt.width, h: rt.height, samples: rt.samples, seen: false, real: o.material, fake };
     o.onBeforeRender = function (r, s, cam, ...rest) {
       const m = o.userData.mirror;
+      if (state.cfg.off) return;
       o.getWorldPosition(p);
       const near = cam.position.distanceTo(p) < state.cfg.dist;
       const every = near ? state.cfg.every : 10;
@@ -117,6 +120,8 @@ export function setupMirrors(scene, state) {
       state.cfg = cfg;
       for (const o of list) {
         const m = o.userData.mirror, rt = o.getRenderTarget();
+        o.material = cfg.off ? m.fake : m.real;
+        if (cfg.off) { rt.dispose(); continue; }
         const w = Math.max(64, Math.round(m.w * cfg.scale)), h = Math.max(64, Math.round(m.h * cfg.scale));
         rt.samples = Math.min(m.samples, cfg.msaa);
         rt.setSize(w, h);
@@ -130,13 +135,13 @@ export function setupMirrors(scene, state) {
  * The rooms paint some fabrics/rugs/art on 1024-2048 px canvases. Uncompressed they cost ~22 MB of video memory each
  * (with mipmaps); on Medium/Low they are shown from a smaller copy. The full-size canvas is kept so High can restore it.
  */
-export function capCanvasTextures(scene, maxDim) {
+export function capCanvasTextures(scene, maxDim, onEach = null) {
   const seen = new Set();
   scene.traverse((o) => {
     const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
     for (const mt of mats) for (const k of ['map', 'normalMap', 'roughnessMap', 'aoMap', 'emissiveMap', 'bumpMap', 'alphaMap']) {
       const t = mt[k];
-      if (!t || seen.has(t) || !t.isCanvasTexture) continue;
+      if (!t || seen.has(t) || !t.isCanvasTexture || t.userData.frozen) continue;
       seen.add(t);
       const full = (t.userData.fullCanvas ||= t.image);
       const kScale = Math.min(1, maxDim / Math.max(full.width, full.height));
@@ -155,6 +160,7 @@ export function capCanvasTextures(scene, maxDim) {
         }
       }
       if (t.image !== want) { t.dispose(); t.image = want; t.needsUpdate = true; }
+      onEach?.(t);
     }
   });
 }
@@ -177,4 +183,37 @@ export function convertAreaLights(scene) {
     r.dispose?.();
   }
   return rects.length;
+}
+
+/**
+ * Once something is on the GPU, the copy kept in JavaScript memory is only needed to rebuild after a lost WebGL
+ * context, and main.js reloads the page in that case instead. Dropping those copies roughly halves the tab's memory
+ * (~240 MB of painted canvases, ~100 MB of compressed texture data, the vertex arrays), which is what keeps phones from
+ * killing the tab ("Aw, Snap!") and stops desktops from paging.
+ */
+function dropArray() { this.array = null; }
+export function freeGeometryAfterUpload(scene) {
+  const seen = new Set();
+  scene.traverse((o) => {
+    const g = o.geometry;
+    if (!g || seen.has(g)) return;
+    seen.add(g);
+    if (!g.boundingSphere) g.computeBoundingSphere(); // frustum culling needs these after the arrays are gone
+    if (!g.boundingBox) g.computeBoundingBox();
+    for (const a of [g.index, ...Object.values(g.attributes)]) {
+      if (!a) continue;
+      const buf = a.isInterleavedBufferAttribute ? a.data : a;
+      if (!buf.onUploadCallback || buf.onUploadCallback === dropArray || buf.onUploadCallback.name === 'onUploadCallback') buf.onUpload(dropArray);
+    }
+  });
+}
+
+/** Call right after renderer.initTexture(t): forget the CPU-side pixels of a texture that is now on the GPU. */
+export function freeTextureData(t) {
+  t.userData.frozen = true; // capCanvasTextures must not rescale it any more
+  if (t.isCompressedTexture) { t.mipmaps = []; return; }
+  if (t.isCanvasTexture) {
+    for (const c of [t.image, t.userData.fullCanvas, ...(t.userData.scaled?.values() || [])]) if (c && c.width) { c.width = 1; c.height = 1; }
+    t.userData.fullCanvas = null; t.userData.scaled = null;
+  }
 }

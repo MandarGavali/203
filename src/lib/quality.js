@@ -9,7 +9,7 @@
 export const TIERS = {
   high:   { label: 'High',   composer: true,  dprMax: 2,   maxMP: 4.7,  shadow: 2048, lights: 12, aniso: 8, canvasMax: 2048, backdrop: '4k', mirror: { scale: 0.75, every: 2, dist: 4.5, msaa: 2 } },
   medium: { label: 'Medium', composer: false, dprMax: 1.5, maxMP: 3.2, shadow: 2048, lights: 8,  aniso: 4, canvasMax: 1024, backdrop: '2k', mirror: { scale: 0.5,  every: 2, dist: 4.0, msaa: 0 } },
-  low:    { label: 'Low',    composer: false, dprMax: 1.5, maxMP: 2.1, shadow: 1024, lights: 5,  aniso: 2, canvasMax: 512,  backdrop: '2k', mirror: { scale: 0.35, every: 3, dist: 3.2, msaa: 0 } },
+  low:    { label: 'Low',    composer: false, dprMax: 1.5, maxMP: 2.1, shadow: 1024, lights: 5,  aniso: 2, canvasMax: 512,  backdrop: '2k', mirror: { off: true, scale: 0.35, every: 3, dist: 3.2, msaa: 0 } },
 };
 export const ORDER = ['high', 'medium', 'low'];
 // multipliers applied on top of the tier's pixel ratio while auto-adapting
@@ -31,6 +31,25 @@ export function gpuName() {
   } catch { return ''; }
 }
 
+/**
+ * True when the browser can only draw WebGL on the CPU (hardware acceleration switched off, GPU blocklisted, remote
+ * desktop...). Asking for a context that must not have a "major performance caveat" fails in exactly that case, and
+ * it also works in browsers that hide the GPU name (Brave, Firefox resistFingerprinting).
+ */
+export function softwareRendering(gpu = gpuName()) {
+  if (/SwiftShader|llvmpipe|Software|Basic Render|softpipe/i.test(gpu)) return true;
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2', { failIfMajorPerformanceCaveat: true });
+    if (gl) { gl.getExtension('WEBGL_lose_context')?.loseContext(); return false; }
+    const any = document.createElement('canvas').getContext('webgl2');
+    any?.getExtension('WEBGL_lose_context')?.loseContext();
+    return !!any;
+  } catch { return false; }
+}
+
+/** Phones/tablets and low-RAM devices: the browser kills a tab long before desktop limits, so memory comes first. */
+export const memoryConstrained = () => matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) || (navigator.deviceMemory || 8) <= 4;
+
 export function detectTier(gpu = gpuName()) {
   const mobile = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
   const mem = navigator.deviceMemory || 8, cores = navigator.hardwareConcurrency || 4;
@@ -46,6 +65,8 @@ export class Quality {
   /** @param {URLSearchParams} params */
   constructor(params, { shotMode = false } = {}) {
     this.gpu = gpuName();
+    this.software = !shotMode && softwareRendering(this.gpu);
+    this.constrained = memoryConstrained();
     const saved = read();
     const q = params.get('q');
     this.shotMode = shotMode;
@@ -58,6 +79,8 @@ export class Quality {
       this.tier = TIERS[saved.tier] ? saved.tier : detectTier(this.gpu);
       this.res = RES_STEPS.includes(saved.res) ? saved.res : 1;
     }
+    // drawing on the CPU: start at the cheapest settings instead of discovering it frame by frame
+    if (this.software && this.mode === 'auto') { this.tier = 'low'; this.res = RES_STEPS[RES_STEPS.length - 1]; }
     this.onChange = () => {};
     this.samples = []; this.good = 0; this.bad = 0; this.cool = 90; // frames to ignore (shader warm-up, post-change settle)
     this.ceiling = 0;      // index into RES_STEPS we must not go above again (set when an upscale made things slow)
@@ -73,7 +96,7 @@ export class Quality {
 
   set(mode) {
     this.mode = mode;
-    if (mode !== 'auto') this.tier = mode; else this.tier = detectTier(this.gpu);
+    if (mode !== 'auto') this.tier = mode; else this.tier = this.software ? 'low' : detectTier(this.gpu);
     this.res = 1; this.ceiling = 0; this.lastUp = -1;
     this.reset();
     write(mode === 'auto' ? { mode: 'auto', tier: this.tier, res: 1 } : { mode });
