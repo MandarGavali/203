@@ -4,8 +4,8 @@ import { FT, CEILING, rooms, pieces } from './plan.js';
 import { buildShell } from './shell.js';
 import { makeCtx, pendingModels } from './lib/ctx.js';
 import { pending as pendingTex, setAnisotropy, loadStats } from './lib/materials.js';
-import { initKTX2 } from './lib/ktx2.js';
-import { Quality } from './lib/quality.js';
+import { initKTX2, setMipDrop } from './lib/ktx2.js';
+import { Quality, markLoading } from './lib/quality.js';
 import { LightBudget } from './lib/lightBudget.js';
 import { Culler } from './lib/cull.js';
 import { mergeStatic, stripTransmission, setupMirrors, capCanvasTextures, convertAreaLights, freeGeometryAfterUpload, freeTextureData } from './lib/optimize.js';
@@ -80,7 +80,9 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
   } else toast('Graphics keep being interrupted - try Quality: Low, or close other tabs and reload.');
 });
 setAnisotropy(Math.min(tier0.aniso, renderer.capabilities.getMaxAnisotropy()));
-initKTX2(renderer);
+initKTX2(renderer, quality.constrained ? 1 : 4);
+setMipDrop(quality.safe ? 2 : quality.constrained ? 1 : 0);
+if (quality.safe) renderer.shadowMap.enabled = false; // last visit crashed while loading: bare minimum this time
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.05, 200);
@@ -153,7 +155,10 @@ async function buildPiece([path, load]) {
     const ctx = makeCtx(scene, renderer, colliders, id);
     await mod.default(ctx);
     // phones: shrink, upload and free this room's painted canvases now, so only one room's worth is ever in memory
-    if (quality.constrained && !shotMode) capCanvasTextures(ctx.group, quality.settings.canvasMax, (t) => { renderer.initTexture(t); freeTextureData(t); });
+    if (quality.constrained && !shotMode) {
+      capCanvasTextures(ctx.group, quality.safe ? 256 : quality.settings.canvasMax, (t) => { renderer.initTexture(t); freeTextureData(t); });
+      await new Promise((r) => setTimeout(r, 30)); // breathing room for the garbage collector between rooms
+    }
     window.__timing[id] = Math.round(performance.now() - t0);
     console.info(`piece ${id} built in ${window.__timing[id]} ms`);
   } catch (e) {
@@ -461,6 +466,7 @@ window.__views = () => Object.keys(views);
 const mark = (s) => console.info(`[load] ${s} @${Math.round(performance.now())}ms`);
 async function start() {
   mark('start');
+  if (!shotMode) markLoading(true); // cleared once loaded; still set on the next visit = this load crashed
   window.__phase = 'pieces';
   setStatus('Building rooms…', 0.05);
   const progress = setInterval(() => {
@@ -478,8 +484,11 @@ async function start() {
   setStatus('Optimizing…', 0.75);
   stripTransmission(scene);
   convertAreaLights(scene);
-  const merged = mergeStatic(scene, { skip: [shell.ceiling, shell.roof] }); // top view toggles those two
-  console.info(`merged static meshes: ${merged.before} -> ${merged.after}`);
+  // merging copies every vertex once (briefly doubling geometry memory): phones skip it and rely on culling instead
+  if (!quality.constrained) {
+    const merged = mergeStatic(scene, { skip: [shell.ceiling, shell.roof] }); // top view toggles those two
+    console.info(`merged static meshes: ${merged.before} -> ${merged.after}`);
+  }
   mirrors = setupMirrors(scene, mirrorState);
   lights = new LightBudget(scene);
   culler = new Culler(scene, { skip: [shell.ceiling, shell.roof] });
@@ -503,6 +512,7 @@ async function start() {
   render();
   mirrorState.force = false;
   mark('first frames rendered');
+  markLoading(false);
   document.body.classList.add('loaded');
   setTimeout(() => loaderEl.remove(), 900);
   if (shotMode) {

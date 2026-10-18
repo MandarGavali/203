@@ -627,9 +627,9 @@ export default async function build(ctx) {
   // ================================================================ WASH (x 15.5–21.5, y 0.5–7.5)
   // wall tiles to 7 ft on the W and E walls + aluminium capping
   box(washTile, 15.5, 15.5 + T, 0.5, 7.5, 0, 7, 0);
-  box(washTile, 21.5 - T, 21.5, 0.5, 7.5, 0, 7, 0);
+  box(washTile, 21.5 - T, 21.5, 0.5, 5.0, 0, 7, 0);   // E wall stops at the door to the kitchen (y 5.0–7.5)
   box(brushed, 15.5, 15.5 + T + 0.02, 0.5, 7.5, 7, 7.04, 0.003);
-  box(brushed, 21.5 - T - 0.02, 21.5, 0.5, 7.5, 7, 7.04, 0.003);
+  box(brushed, 21.5 - T - 0.02, 21.5, 0.5, 5.0, 7, 7.04, 0.003);
   {
     const W1 = 15.5 + T, CT = 3.0, CB = 2.9, CD = 17.65; // counter front at x 17.65
     const WS = { x1: 15.95, x2: 17.2, y1: 4.35, y2: 5.85 };
@@ -724,14 +724,14 @@ export default async function build(ctx) {
     prop('potted_plant_02', { h: 1.9 }, { x: 15.75, y: -1.7, h: -0.04, face: 'S' }),
   ]);
 
-  // wash: blue bucket + mug near the counter end
+  // wash: blue bucket against the E wall beside the basket (kept clear of the kitchen door at y 5.0–7.5)
   {
     const blue = new THREE.MeshStandardMaterial({ color: 0x2f6fb0, roughness: 0.45 });
-    cyl(group, blue, 20.85, 5.9, 0, 1.0, 0.42, 0.5, 40, true).material.side = THREE.DoubleSide;
-    cyl(group, blue, 20.85, 5.9, 0, 0.02, 0.42);
+    cyl(group, blue, 20.85, 3.45, 0, 1.0, 0.42, 0.5, 40, true).material.side = THREE.DoubleSide;
+    cyl(group, blue, 20.85, 3.45, 0, 0.02, 0.42);
     const hd = new THREE.Mesh(new THREE.TorusGeometry(m(0.5), m(0.012), 6, 32, Math.PI), greyPlastic);
-    hd.position.copy(ctx.v3(20.85, 5.9, 1.0)); hd.rotation.y = Math.PI / 2; group.add(hd);
-    ctx.collide({ x1: 20.3, y1: 5.35, x2: 21.5, y2: 6.45 });
+    hd.position.copy(ctx.v3(20.85, 3.45, 1.0)); hd.rotation.y = Math.PI / 2; group.add(hd);
+    ctx.collide({ x1: 20.3, y1: 2.9, x2: 21.5, y2: 4.0 });
   }
 
   // ================================================================ UTILITY LEDGE: folding clothes-drying rack
