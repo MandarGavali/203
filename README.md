@@ -61,6 +61,16 @@ npm run assets                            # (re)build public/assets/ for everyth
 minutes on a cold run (the texture encoder is slow, but runs 4 jobs in parallel; `--jobs N`, `--only id,id`, `--force`).
 Tuning knobs (mesh simplification targets, texture size caps) are at the top of `tools/optimize-assets.mjs`.
 
+### Phones: the pre-built "lite" copy
+
+Phones (and low-RAM devices) do not build the flat in the browser. `npm run bake` (tools/bake-lite.mjs) builds it once
+in a desktop browser, exports it as one glTF and compresses it for phones (KTX2 textures, meshopt geometry) into
+`public/assets/lite/scene.glb` + `scene.json` (lights, walls). Phones just download and display that file: about
+half the memory and a fraction of the start-up work of building ~1,800 meshes and ~90 painted canvases themselves.
+
+**Re-run `npm run bake` after changing any room, the shell or the assets** (after `npm run assets`), then commit the
+two files. `?lite=1` shows the phone version on a desktop, `?lite=0` forces the full build on a phone.
+
 ### Measuring
 
 ```bash

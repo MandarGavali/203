@@ -4,7 +4,8 @@ import { FT, CEILING, rooms, pieces } from './plan.js';
 import { buildShell } from './shell.js';
 import { makeCtx, pendingModels } from './lib/ctx.js';
 import { pending as pendingTex, setAnisotropy, loadStats } from './lib/materials.js';
-import { initKTX2, setMipDrop } from './lib/ktx2.js';
+import { initKTX2, setMipDrop, getKTX2 } from './lib/ktx2.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Quality, markLoading, crashedDuring } from './lib/quality.js';
 import { LightBudget } from './lib/lightBudget.js';
 import { Culler } from './lib/cull.js';
@@ -15,7 +16,8 @@ import { defaultViews } from './views.js';
 const params = new URLSearchParams(location.search);
 const shotView = params.get('view');
 const topPiece = params.get('top');
-const shotMode = !!(shotView || topPiece);
+const bakeMode = params.has('bake'); // tools/bake-lite.mjs: build everything, then export it for phones
+const shotMode = !!(shotView || topPiece || bakeMode);
 const m = (ft) => ft * FT;
 
 // Performance model (see README "Performance"):
@@ -26,6 +28,9 @@ const m = (ft) => ft * FT;
 const quality = new Quality(params, { shotMode });
 const tier0 = quality.settings;
 const fixedPR = params.has('pr') ? +params.get('pr') : null; // ?pr=2 pins the pixel ratio (benchmarks)
+// Phones load a pre-built copy of the flat (public/assets/lite, made by `npm run bake`) instead of generating it:
+// generating ~1,800 meshes and ~90 painted canvases in the browser is what ran phones out of memory.
+const lite = !shotMode && params.get('lite') !== '0' && (params.get('lite') === '1' || quality.constrained);
 
 // ---------- loading screen ----------
 const loaderEl = document.getElementById('loader');
@@ -88,7 +93,7 @@ renderer.domElement.addEventListener('webglcontextlost', (e) => {
 });
 setAnisotropy(Math.min(tier0.aniso, renderer.capabilities.getMaxAnisotropy()));
 initKTX2(renderer, quality.constrained ? 1 : 4);
-setMipDrop(quality.safe ? 2 : quality.constrained ? 1 : 0);
+setMipDrop(lite ? (quality.safe ? 1 : 0) : quality.safe ? 2 : quality.constrained ? 1 : 0); // the lite copy is already phone-sized
 if (!tier0.shadow) renderer.shadowMap.enabled = false; // phones: no shadow pass, much smaller shaders
 
 const scene = new THREE.Scene();
@@ -131,12 +136,16 @@ const bounce = new THREE.HemisphereLight(0xfffaf2, 0xd9c8b0, 1.1);
 scene.add(bounce);
 
 // ---------- shell ----------
-const shell = buildShell();
-scene.add(shell.group);
-const colliders = shell.colliders;
+let shell = { group: null, ceiling: null, roof: null };
+const colliders = [];
+if (!lite) {
+  shell = buildShell();
+  scene.add(shell.group);
+  colliders.push(...shell.colliders);
+}
 
-// soft fill per room: one warm ceiling light (rooms can add their own fixtures)
-for (const [id, r] of Object.entries(rooms)) {
+// soft fill per room: one warm ceiling light (rooms can add their own fixtures; the lite copy brings its own)
+for (const [id, r] of Object.entries(lite ? {} : rooms)) {
   if (r.outdoor) continue;
   const area = (r.x2 - r.x1) * (r.y2 - r.y1);
   const l = new THREE.PointLight(0xffe4c4, Math.min(14, 2 + area * 0.06), 0, 2);
@@ -173,9 +182,62 @@ async function buildPiece([path, load]) {
   }
 }
 // on phones, build one room at a time: building them all at once briefly needs far more memory than the result
-const loadPieces = quality.constrained
-  ? Object.entries(modules).reduce((p, e) => p.then(() => buildPiece(e)), Promise.resolve())
+const loadPieces = lite ? loadLite()
+  : quality.constrained ? Object.entries(modules).reduce((p, e) => p.then(() => buildPiece(e)), Promise.resolve())
   : Promise.all(Object.entries(modules).map(buildPiece));
+
+async function loadLite() {
+  const { MeshoptDecoder } = await import('three/addons/libs/meshopt_decoder.module.js');
+  const meta = await fetch('assets/lite/scene.json').then((r) => r.json());
+  const loader = new GLTFLoader().setKTX2Loader(getKTX2()).setMeshoptDecoder(MeshoptDecoder);
+  const gltf = await loader.loadAsync('assets/lite/scene.glb', (e) => {
+    if (e.total) setStatus(`Loading the apartment… ${Math.round((e.loaded / e.total) * 100)}%`, 0.05 + 0.65 * (e.loaded / e.total));
+  });
+  for (const child of [...gltf.scene.children]) scene.add(child); // 'shell' + one 'piece-<room>' group per room
+  scene.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  shell.group = scene.getObjectByName('shell');
+  shell.ceiling = scene.getObjectByName('ceiling');
+  shell.roof = scene.getObjectByName('roof');
+  colliders.push(...meta.colliders);
+  for (const L of meta.lights) {
+    const l = L.type === 'SpotLight' ? new THREE.SpotLight(L.color, L.intensity, L.distance, L.angle, L.penumbra, L.decay)
+      : new THREE.PointLight(L.color, L.intensity, L.distance, L.decay);
+    l.position.fromArray(L.pos);
+    l.name = L.name;
+    if (l.isSpotLight) { l.target.position.fromArray(L.target); scene.add(l.target); }
+    scene.add(l);
+  }
+}
+
+// Export the built flat for phones (driven by tools/bake-lite.mjs; run on a desktop)
+async function bake() {
+  const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+  const { decompress } = await import('three/addons/utils/WebGLTextureUtils.js');
+  scene.updateMatrixWorld(true);
+  const lightsOut = [], p = new THREE.Vector3(), q = new THREE.Vector3();
+  const roots = scene.children.filter((o) => o.name === 'shell' || o.name.startsWith('piece-'));
+  const all = [];
+  scene.traverse((o) => all.push(o));
+  for (const o of all) {
+    if (o.isLight && (o.isPointLight || o.isSpotLight)) {
+      o.getWorldPosition(p);
+      const L = { type: o.type, name: o.name, color: o.color.getHex(), intensity: o.intensity, distance: o.distance, decay: o.decay, pos: p.toArray() };
+      if (o.isSpotLight) { o.target.getWorldPosition(q); Object.assign(L, { angle: o.angle, penumbra: o.penumbra, target: q.toArray() }); }
+      lightsOut.push(L);
+      o.parent.remove(o);
+    }
+    // only plain data survives into glTF extras
+    o.userData = o.userData.hideInTop ? { hideInTop: true } : {};
+    for (const mt of o.material ? [].concat(o.material) : []) {
+      mt.userData = {};
+      for (const k in mt) if (mt[k]?.isTexture) mt[k].userData = {};
+    }
+  }
+  const exporter = new GLTFExporter().setTextureUtils({ decompress });
+  const glb = await exporter.parseAsync(roots, { binary: true, maxTextureSize: 1024, onlyVisible: true });
+  window.__bakeResult = { glb: new Uint8Array(glb), meta: { colliders, lights: lightsOut } };
+  window.__bakeDone = true;
+}
 
 // ---------- camera modes ----------
 let activeCam = camera;
@@ -493,7 +555,7 @@ async function start() {
   stripTransmission(scene);
   convertAreaLights(scene);
   // merging copies every vertex once (briefly doubling geometry memory): phones skip it and rely on culling instead
-  if (!quality.constrained) {
+  if (!quality.constrained && !lite) { // (the lite copy is merged already, and its meshes are compressed)
     const merged = mergeStatic(scene, { skip: [shell.ceiling, shell.roof] }); // top view toggles those two
     console.info(`merged static meshes: ${merged.before} -> ${merged.after}`);
   }
@@ -508,6 +570,7 @@ async function start() {
   window.__phase = 'compile';
   await applyTier(true);
   mark('tier applied');
+  if (bakeMode) { await bake(); return; }
   camera.updateMatrixWorld(true);
   if (params.get('budget') === '0' || (shotMode && !params.has('budget'))) lights.enabled = false;
   await prewarm();
