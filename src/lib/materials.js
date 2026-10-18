@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getKTX2 } from './ktx2.js';
+import { getKTX2, trimMips } from './ktx2.js';
 
 // Shared PBR material library. Textures live in public/assets/ph/<id>/{diff,nor,orm}.ktx2 (built from assets-src/).
 // Every surface built by shell/rooms uses world-space UVs (see worldUV), so `size` = metres per texture repeat.
@@ -47,6 +47,7 @@ export function tex(rawUrl, { srgb = false, repeat = 1 } = {}) {
       t.magFilter = real.magFilter;
       t.generateMipmaps = false;
       t.needsUpdate = true;
+      trimMips(t);
       done();
     }, undefined, () => { console.warn('missing texture', url); done(); });
   } else {

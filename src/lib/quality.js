@@ -48,6 +48,15 @@ export function softwareRendering(gpu = gpuName()) {
 }
 
 /** Phones/tablets and low-RAM devices: the browser kills a tab long before desktop limits, so memory comes first. */
+// If the tab died while loading (phones: "Aw, Snap!"), the next visit starts in a minimal "safe" mode.
+const LOADING_KEY = 'house3d.loadingSince';
+export function previousLoadCrashed() {
+  try { const t = +localStorage.getItem(LOADING_KEY); return t > 0 && Date.now() - t < 30 * 60 * 1000; } catch { return false; }
+}
+export function markLoading(on) {
+  try { if (on) localStorage.setItem(LOADING_KEY, String(Date.now())); else localStorage.removeItem(LOADING_KEY); } catch { /* storage blocked */ }
+}
+
 export const memoryConstrained = () => matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) || (navigator.deviceMemory || 8) <= 4;
 
 export function detectTier(gpu = gpuName()) {
@@ -66,7 +75,8 @@ export class Quality {
   constructor(params, { shotMode = false } = {}) {
     this.gpu = gpuName();
     this.software = !shotMode && softwareRendering(this.gpu);
-    this.constrained = memoryConstrained();
+    this.safe = !shotMode && memoryConstrained() && previousLoadCrashed(); // phones only: a desktop reload mid-load is not a crash
+    this.constrained = this.safe || memoryConstrained();
     const saved = read();
     const q = params.get('q');
     this.shotMode = shotMode;
@@ -80,6 +90,7 @@ export class Quality {
       this.res = RES_STEPS.includes(saved.res) ? saved.res : 1;
     }
     // drawing on the CPU: start at the cheapest settings instead of discovering it frame by frame
+    if (this.safe) { this.mode = 'low'; this.tier = 'low'; this.res = RES_STEPS[RES_STEPS.length - 1]; }
     if (this.software && this.mode === 'auto') { this.tier = 'low'; this.res = RES_STEPS[RES_STEPS.length - 1]; }
     this.onChange = () => {};
     this.samples = []; this.good = 0; this.bad = 0; this.cool = 90; // frames to ignore (shader warm-up, post-change settle)

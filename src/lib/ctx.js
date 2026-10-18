@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FT, CEILING, rooms } from '../plan.js';
 import { lib, pbr, worldUV, tex, loadStats, getAnisotropy } from './materials.js';
-import { getKTX2 } from './ktx2.js';
+import { getKTX2, trimMips } from './ktx2.js';
 
 // The API every room module receives. All positions are PLAN FEET: x east, y south, h up (feet above floor).
 //
@@ -35,7 +35,10 @@ function loadModel(url) {
         if (o.isMesh) {
           o.castShadow = o.receiveShadow = true;
           const mats = Array.isArray(o.material) ? o.material : [o.material];
-          for (const mt of mats) if (mt.map) mt.map.anisotropy = getAnisotropy();
+          for (const mt of mats) {
+            if (mt.map) mt.map.anisotropy = getAnisotropy();
+            for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) if (mt[k]) trimMips(mt[k]);
+          }
         }
       });
       return g.scene;
